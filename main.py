@@ -241,7 +241,7 @@ class PublisherHandler(tornado.web.RequestHandler):
                 {"_id": ObjectId(publisher_id)}
             )
         except Exception:
-            self.write("Errore nell'id")
+            self.write({"errore": "Errore nell'id"})
             self.set_status(400)
             return
 
@@ -253,47 +253,133 @@ class PublisherHandler(tornado.web.RequestHandler):
 
 
 
+
 class BooksHandler(tornado.web.RequestHandler):
-    async def get(self, id):
-        id = int(id)
-        prodotto = None
-        for p in products:
-            if p["id"] == id:
-                prodotto = p
-                break
-        if not prodotto:
-            self.set_status(404)
-            self.write("Prodotto non trovato")
+    async def get(self, publisher_id, book_id=None):
+        self.set_header("Content-Type", "application/json")
+        title = self.get_query_argument("title", None)
+        year = self.get_query_argument("year", None)
+        genre = self.get_query_argument("genre", None)
+        author = self.get_query_argument("author", None)
+        query = {}
+
+        if publisher_id:
+            query["publisher_id"] = ObjectId(publisher_id)
+        else:
+            self.write({"errore": "Publisher id errato"})
+            self.set_status(400)
+            return
+        if book_id:
+            query["_id"] = ObjectId(book_id)
+        if title:
+            query["title"] = title
+        if year:
+            query["year"] = year
+        if genre:
+            query["genre"] = genre
+        if author:
+            query["author"] = author
+
+        found = []
+        documents = books_collection.find(query)
+        async for document in documents:
+            found.append(document)
+        self.write(json_util.dumps(found))
+
+    async def post(self, publisher_id):
+        self.set_header("Content-Type", "application/json")
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": ""})
             return
 
-    def post(self, id):
-        global products
-        id = int(id)
-        prodotto = None
-        for p in products:
-            if p["id"] == id:
-                prodotto = p
-                break
+        required_fields = ["title", "author", "genre", "year"]
+        for field in required_fields:
+            if field not in data or not data[field]:
+                self.set_status(400)
+                self.write({"errore": f"Parametro mancante o vuoto: {field}"})
+                return
 
-        if not prodotto:
-            self.set_status(404)
-            self.write("Prodotto non trovato")
+        try:
+            data["publisher_id"] = ObjectId(publisher_id)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "publisher_id non valido"})
             return
 
-        prodotto["nome"] = self.get_argument("nome")
-        prodotto["categoria"] = self.get_argument("categoria")
-        prodotto["prezzo"] = float(self.get_argument("prezzo"))
-        prodotto["disponibile"] = self.get_argument("disponibile", None) is not None
+        result = await books_collection.insert_one(data)
+        new_book = await books_collection.find_one({"_id": ObjectId(result.inserted_id)})
+        self.write(json_util.dumps(new_book))
 
-        self.redirect("/products")
+    async def put(self, publisher_id, book_id):
+        self.set_header("Content-Type", "application/json")
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "JSON non valido"})
+            return
+        try:
+            data["publisher_id"] = ObjectId(publisher_id)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "publisher_id non valido"})
+            return
+
+        try:
+            result = await books_collection.update_one(
+                {"_id": ObjectId(book_id)},
+                {"$set": data}
+            )
+        except Exception:
+            self.write("Errore nell'id")
+            self.set_status(400)
+            return
+        self.write({
+            "matched": result.matched_count,
+            "modified": result.modified_count
+        })
+
+    async def delete(self, publisher_id, book_id):
+        self.set_header("Content-Type", "application/json")
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "JSON non valido"})
+            return
+        try:
+            data["publisher_id"] = ObjectId(publisher_id)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "publisher_id non valido"})
+            return
+        try:
+            result = await books_collection.delete_one(
+                {"_id": ObjectId(book_id)}
+            )
+        except Exception:
+            self.write({"errore": "Errore nell'id"})
+            self.set_status(400)
+            return
+
+        found = []
+        documents = books_collection.find()
+        async for document in documents:
+            found.append(document)
+        self.write(json_util.dumps(found))
 
 
 def make_app():
     return tornado.web.Application([
         (r"/publishers", PublisherHandler),
-        (r"/publishers/([0-9a-fA-F]{24})", PublisherHandler),
-        (r"/publishers/([0-9a-fA-F]{24})/books", BooksHandler),
-        (r"/publishers/([0-9a-fA-F]{24})/books/{book_id}", BooksHandler),
+        (r"/publishers/([0-9a-f]{24})", PublisherHandler),
+        (r"/publishers/([0-9a-f]{24})/books", BooksHandler),
+        (r"/publishers/([0-9a-f]{24})/books/([0-9a-f]{24})", BooksHandler),
     ], debug=True)
 
 
