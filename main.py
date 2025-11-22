@@ -3,6 +3,7 @@ import tornado.web
 from pymongo import AsyncMongoClient
 import json
 from bson import ObjectId
+from bson import json_util
 
 """
 PUBLISHERS
@@ -33,6 +34,10 @@ PUBLISHERS
     "country": "Italia"
   }
 ]
+Invoke-WebRequest -Uri "http://localhost:8888/publishers/ID_DA_MODIFICARE" `
+    -Method Put `
+    -Body '{"_id": "69182d76008aab5e7d9dc2a1", "name":"NuovoNome", "founded_year":2000, "country":"Italia"}' `
+    -ContentType "application/json"
 
 BOOKS
 
@@ -160,15 +165,15 @@ class PublisherHandler(tornado.web.RequestHandler):
         if name:
             query["name"] = name
         if year:
-            query["founded_year"] = int(year)
+            query["founded_year"] = year
         if country:
             query["country"] = country
 
-        found=[]
-        documents = publishers_collection.find()
+        found = []
+        documents = publishers_collection.find(query)
         async for document in documents:
             found.append(document)
-        self.write(dict(found))
+        self.write(json_util.dumps(found))
 
     async def post(self):
         self.set_header("Content-Type", "application/json")
@@ -177,13 +182,74 @@ class PublisherHandler(tornado.web.RequestHandler):
         except Exception:
             self.set_status(400)
             self.write({"errore": ""})
+            return
 
-        if not ("founded_year" in data.keys() and data["founded_year"]):
+        if not ("founded_year" in data.keys()) and not data["founded_year"]:
             self.set_status(400)
-        if not ("name" in data.keys() and data["name"]):
+            self.write({"errore": "parametri errati"})
+            return
+        if not ("name" in data.keys()) and not data["name"]:
             self.set_status(400)
-        if not ("country" in data.keys() and data["country"]):
+            self.write({"errore": "parametri errati"})
+            return
+        if not ("country" in data.keys()) and not data["country"]:
             self.set_status(400)
+            self.write({"errore": "parametri errati"})
+            return
+
+        await publishers_collection.insert_one(data)
+        found = []
+        documents = publishers_collection.find({})
+        async for document in documents:
+            found.append(document)
+        self.write(json_util.dumps(found))
+
+    async def put(self, publisher_id):
+        self.set_header("Content-Type", "application/json")
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "JSON non valido"})
+            return
+        try:
+            result = await publishers_collection.update_one(
+                {"_id": ObjectId(publisher_id)},
+                {"$set": data}
+            )
+        except Exception:
+            self.write("Errore nell'id")
+            self.set_status(400)
+            return
+        self.write({
+            "matched": result.matched_count,
+            "modified": result.modified_count
+        })
+
+    async def delete(self, publisher_id):
+        self.set_header("Content-Type", "application/json")
+
+        try:
+            data = tornado.escape.json_decode(self.request.body)
+        except Exception:
+            self.set_status(400)
+            self.write({"errore": "JSON non valido"})
+            return
+        try:
+            result = await publishers_collection.delete_one(
+                {"_id": ObjectId(publisher_id)}
+            )
+        except Exception:
+            self.write("Errore nell'id")
+            self.set_status(400)
+            return
+
+        found = []
+        documents = publishers_collection.find()
+        async for document in documents:
+            found.append(document)
+        self.write(json_util.dumps(found))
 
 
 
@@ -222,7 +288,6 @@ class BooksHandler(tornado.web.RequestHandler):
         self.redirect("/products")
 
 
-
 def make_app():
     return tornado.web.Application([
         (r"/publishers", PublisherHandler),
@@ -242,7 +307,7 @@ async def main(shutdown_event):
 
 if __name__ == "__main__":
     client = AsyncMongoClient("mongodb://localhost:27017")
-    db = client["mongodb"]
+    db = client["test"]
     publishers_collection = db["Publisher"]
 
     books_collection = db["books"]
